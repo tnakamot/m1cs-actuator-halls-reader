@@ -1,9 +1,9 @@
 % M1CS_Read_Halls.m
 %
-% Author: Chris Carter
-% Email: ccarter@tmt.org
-% Revision Date: 20th September 2022
-% Version: 1.1
+% Author: Chris Carter, Takashi Nakamoto
+% Email: ccarter@tmt.org, tnakamoto@tmt.org
+% Revision Date: 11th June 2024
+% Version: 1.2
 %
 % VERSION NOTES:
 %
@@ -14,6 +14,13 @@
 % V1.1 - Acquires only the number of samples defined by the 'nsamples'
 % variable. At termination, the data, as presented in the generated
 % Figures, are automatically saved to a file.
+%
+% V1.2 - Removed the plots for faster execution. Shows statistics
+% at the end of execution. Use atan2 instead of atan. Added 2*pi
+% depending on argument of atan2 so that the calculated positions
+% becomes continuous over the travel range of the offloader. Also,
+% added subtracted pi for offloader and snubber so that the calculated
+% position looks similar to the examples in the functional test procedure.
 %
 % INSTALLATION NOTES:
 %
@@ -28,70 +35,31 @@
 % machine running the script, and added to the MATLAB PATH.
 %
 % Script has been shown to work with a LabJack T4 and MATLAB Version
-% 9.13.0.1967605 (R2022b) Prerelease.
+% R2023a.
 %
 %%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%%
 
 % Set up the MATLAB environment
 
-clc         % Clear the command window
-
-clear all   % Clear previous environment variables and functions
-close all;  % Close previous Figures
+clear all % Clear previous environment variables and functions
+close all; % Close previous Figures
 
 % Definitions
 
 % From MMCs position calculation recipe
-
-k = 10/1.95;    % Units: mm
-V_0 = 1.65;     % Units: Volts
+k = 10/1.95; % Units: mm
+V_0 = 1.6316; % Units: Volts
 
 % Some variable declarations
 
-nsamples = 2000;    % Number of samples to record
+nsamples = 100; % Number of samples to record
 count = 0;
 time = [0];
 
 AIN0_vector = [0];
 AIN1_vector = [0];
 
-POS_vector = [0];
-
-% Figure 1: Analogue input voltages from Hall Sensors on target board
-
-f(1) = figure(1);
-p = plot (time, AIN0_vector, time, AIN1_vector);
-
-ylim([0 4]);
-xlabel('Sample No.');
-ylabel('AINx (Volts)');
-title('Analogue Hall Voltages');
-legend('AIN0', 'AIN1');
-grid
-
-p(1).XDataSource = 'time';
-p(1).YDataSource = 'AIN0_vector';
-
-p(2).XDataSource = 'time';
-p(2).YDataSource = 'AIN1_vector';
-
-% Figure 2: Derived position computed from MMC recipe
-
-f(2) = figure(2);
-q = plot(time, POS_vector);
-
-ylim([-25 25]);
-xlabel('Sample No.');
-ylabel('Position (mm)');
-title('Derived Position');
-legend('Position (mm)');
-grid
-
-q(1).XDataSource = 'time';
-q(1).YDataSource = 'POS_vector';
-
 % Make the LJM .NET assembly visible
-
 ljmAsm = NET.addAssembly('LabJack.LJM');
 
 % Creating an object to nested class LabJack.LJM.CONSTANTS
@@ -103,13 +71,10 @@ handle = 0;
 
 try
     % Open any LabJack device, using any connection, with any identifier
-
     [ljmError, handle] = LabJack.LJM.OpenS('ANY', 'ANY', 'ANY', handle);
-    showDeviceInfo(handle);
 
     % Set up and call eReadName() to read the Analogue Input(s)
-
-        for loop = 1:nsamples
+    for loop = 1:nsamples
 
         [ljmError, AIN0_val] = LabJack.LJM.eReadName(handle, 'AIN0', 0);
         [ljmError, AIN1_val] = LabJack.LJM.eReadName(handle, 'AIN1', 0);
@@ -119,32 +84,9 @@ try
 
         AIN0_vector(count) = AIN0_val;
         AIN1_vector(count) = AIN1_val;
-
-        % Transfer analogue values from T4 into variables named more
-        % consistently with MMC's position calculation recipe
-
-        V_1 = AIN0_val;
-        V_2 = AIN1_val;
-
-        % Calculate position in millimetres
-
-        POS_vector(count) = k * (atan(((V_2 - V_0) / (V_1 - V_0)) ...
-            + (pi / 4)));
-
-        % Update the data on both plots
-
-        refreshdata(p);
-        refreshdata(q);
-        drawnow;
-
-        end
-
-        % Save Figures to a file for later review & circulation
-
-        savefig(f, 'Hall_sensor_figures.fig');
-
+    end
 catch e
-    showErrorMessage(e)
+    disp(e)
     LabJack.LJM.CloseAll();
     return
 end
@@ -154,7 +96,25 @@ try
 
     LabJack.LJM.Close(handle);
 catch e
-    showErrorMessage(e)
+    disp(e)
 end
+
+% Take statistics and calculate position in millimeters
+V_1 = mean(AIN0_vector);
+V_2 = mean(AIN1_vector);
+if V_2 - V_0 > 0
+    rollover = 0;
+else
+    rollover = 2 * pi;
+end
+POS = k * (atan2(V_2 - V_0, V_1 - V_0) + pi/4 - pi + rollover);
+POS_os = k * (atan2(V_2 - V_0, V_1 - V_0) + pi/4);
+
+fprintf("V0 : %5.3f V\n", V_0);
+fprintf("Number of sapmles: %d\n", nsamples);
+fprintf("V1 : %5.3f V (avg), %6.4f V (stdev)\n", V_1, std(AIN0_vector));
+fprintf("V2 : %5.3f V (avg), %6.4f V (stdev)\n", V_2, std(AIN1_vector));
+fprintf("Position (offloader, snubber): %6.3f mm\n", POS);
+fprintf("Position (output shaft): %6.3f mm\n", POS_os);
 
 % End of file
